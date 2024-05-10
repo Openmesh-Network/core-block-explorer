@@ -18,11 +18,6 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-// Every new block update UI.
-// Have a set of templates that get refreshed automatically.
-
-// Show header crap like that.
-// Show transactions!
 // Show validators.
 //	- Folding view?
 // Add graphs?
@@ -116,15 +111,15 @@ func newBlock(data []byte) {
 			panic(err)
 		}
 
-		summaryFile, err := os.Create("renders/summary.html")
+		summaryFile, err := os.Create(renderDir + "/summary.html")
 		if err != nil {
 			panic(err)
 		}
-		blockFile, err := os.Create("renders/block/id/" + templateData.Hash + ".html")
+		blockFile, err := os.Create(renderDir + "/block/id/" + templateData.Hash + ".html")
 		if err != nil {
 			panic(err)
 		}
-		blockPrevFile, err := os.Create("renders/block/id/" + templateData.PrevHash + ".html")
+		blockPrevFile, err := os.Create(renderDir + "/block/id/" + templateData.PrevHash + ".html")
 		if err != nil {
 			panic(err)
 		}
@@ -137,9 +132,7 @@ func newBlock(data []byte) {
 
 		templateData.IsSummary = false
 		temp.Execute(blockFile, templateData)
-		if err != nil {
-			panic(err)
-		}
+
 		prevTemplate.IsPrev = true
 		prevTemplate.NextHash = templateData.Hash
 		err = temp.Execute(blockPrevFile, prevTemplate)
@@ -148,30 +141,16 @@ func newBlock(data []byte) {
 		}
 	}
 
-	{ // Parse transactions.
-		// Take transaction from base64 to transaction and unmarshal.
-	}
-
 	prevTemplate = templateData
-
-	// Render block id and save to block/id/{hash}
-	// Render block id and save to block/latest
-	// Save summary to /
 }
 
 func main() {
-	// Have to make a package here...
-	// HTMX templates?
-
-	// ctx, cancel := context.WithCancel(context.Background())
-	// defer cancel()
-
 	mux := http.NewServeMux()
 	fcache := filecache.NewDefaultCache()
 	fcache.Start()
 	defer fcache.Stop()
 
-	os.MkdirAll("renders/block/id", 0777)
+	os.MkdirAll(renderDir+"/block/id", 0777)
 
 	mux.HandleFunc("/", func(res http.ResponseWriter, req *http.Request) {
 		url := req.URL.String()
@@ -198,9 +177,27 @@ func main() {
 		}
 	})
 
+	renderBlockQueue := make(chan int)
+	go func() {
+		for {
+			height := <-renderBlockQueue
+			response, err := http.Get("http://" + rpcUrl + "/block?height=" + strconv.Itoa(height))
+			if err != nil {
+				panic(err)
+			}
+			data, err := io.ReadAll(response.Body)
+			if err != nil {
+				panic(err)
+			}
+
+			newBlock(data)
+		}
+	}()
+
 	go func() {
 		hashLast := ""
 		t := time.NewTicker(time.Millisecond * 400)
+		lastBlock := 1
 		for {
 			select {
 			case <-t.C:
@@ -211,16 +208,23 @@ func main() {
 				data, err := io.ReadAll(response.Body)
 
 				hashNew, err := json.GetString(data, "result", "block_id", "hash")
-
+				hStr, err := json.GetString(data, "result", "block", "header", "height")
 				if err != nil {
 					panic(err)
-				} else {
-					if hashNew != hashLast {
-						newBlock(data)
-						hashLast = hashNew
-					}
+				}
+				h, err := strconv.Atoi(hStr)
+				if err != nil {
+					panic(err)
 				}
 
+				for i := lastBlock; i <= h; i++ {
+					renderBlockQueue <- i
+					lastBlock++
+				}
+
+				if hashNew != hashLast {
+					hashLast = hashNew
+				}
 			}
 		}
 	}()
