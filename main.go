@@ -229,5 +229,7 @@ func main() {
 		}
 	}()
 
-	http.ListenAndServe("127.0.0.1:9999", mux)
+	port := "9999"
+	fmt.Println("Listening on port: ", port)
+	http.ListenAndServe("127.0.0.1:" + port, mux)
 }
